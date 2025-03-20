@@ -384,7 +384,7 @@ import torch
 import torch.nn as nn
 
 # For DINOv2
-from transformers import AutoImageProcessor, Dinov2Model, ConvNextV2Model
+from transformers import AutoImageProcessor, Dinov2Model
 
 # For EfficientNet, ConvNeXt
 import timm
@@ -416,8 +416,9 @@ class DinoV2BaseEncoder(nn.Module):
     def __init__(self, output_dim=1024, freeze=True):
         super().__init__()
         # Download the DINOv2-Base checkpoint
-        self.processor = AutoImageProcessor.from_pretrained("facebook/dinov2-base")
-        self.encoder = Dinov2Model.from_pretrained("facebook/dinov2-base")
+        self.processor = AutoImageProcessor.from_pretrained("facebook/dinov2-small")
+        self.processor.size = {'height': 128, 'width': 128}
+        self.encoder = Dinov2Model.from_pretrained("facebook/dinov2-small")
         self.orig_emb_dim = self.encoder.config.hidden_size  # 768 by default for 'base'
         
         # Optional projection to unify dims (e.g. 768 -> 1024)
@@ -493,12 +494,15 @@ class EfficientNetB0Encoder(nn.Module):
         self.encoder = timm.create_model(model_name, pretrained=True, num_classes=0)
 
         self.data_config = timm.data.resolve_model_data_config(self.encoder)
+        target_size = 112  # You can try 96, 128, etc.
+        self.data_config['input_size'] = (3, target_size, target_size)
         self.transforms = timm.data.create_transform(
             **self.data_config, is_training=False, use_prefetcher=False
         )
 
         self.orig_emb_dim = self.encoder.num_features
         if output_dim is not None and output_dim != self.orig_emb_dim:
+            print(f"[INFO] Projecting to {output_dim}")
             self.proj = nn.Linear(self.orig_emb_dim, output_dim)
             self.output_dim = output_dim
         else:
