@@ -376,3 +376,143 @@ class SampleDist:
 
     def sample(self):
         return self._dist.sample()
+
+###########################################################
+# Pretrained encoders for DINOv2, ConvNeXt, EfficientNet
+###########################################################
+import torch
+import torch.nn as nn
+
+# For DINOv2
+from transformers import AutoImageProcessor, Dinov2Model, ConvNextV2Model
+
+# For EfficientNet, ConvNeXt
+import timm
+
+def build_pretrained_encoder(encoder_type="dino", output_dim=1024, freeze=True):
+    """
+    Returns a nn.Module that extracts features from the selected encoder.
+    encoder_type: "dino", "convnext", or "efficientnet"
+    output_dim: the final projection size (could be None if you want native size)
+    freeze: whether to freeze the encoder weights
+    """
+    if encoder_type.lower() == "dino":
+        print("Using DinoV2 Encoder")
+        return DinoV2BaseEncoder(output_dim=output_dim, freeze=freeze)
+    elif encoder_type.lower() == "convnext":
+        print("Using ConvNeXtV2Tiny Encoder")
+        return ConvNeXtV2TinyEncoder(output_dim=output_dim, freeze=freeze)
+    elif encoder_type.lower() == "efficientnet":
+        print("Using EfficientNetB0 Encoder", freeze)
+        return EfficientNetB0Encoder(output_dim=output_dim, freeze=freeze)
+    else:
+        raise ValueError(f"Unknown encoder_type: {encoder_type}")
+
+
+class DinoV2BaseEncoder(nn.Module):
+    """
+    Loads a DINOv2-Base model from Hugging Face, without a classification head.
+    """
+    def __init__(self, output_dim=1024, freeze=True):
+        super().__init__()
+        # Download the DINOv2-Base checkpoint
+        self.processor = AutoImageProcessor.from_pretrained("facebook/dinov2-base")
+        self.encoder = Dinov2Model.from_pretrained("facebook/dinov2-base")
+        self.orig_emb_dim = self.encoder.config.hidden_size  # 768 by default for 'base'
+        
+        # Optional projection to unify dims (e.g. 768 -> 1024)
+        if output_dim is not None and output_dim != self.orig_emb_dim:
+            self.proj = nn.Linear(self.orig_emb_dim, output_dim)
+            self.output_dim = output_dim
+        else:
+            self.proj = nn.Identity()
+            self.output_dim = self.orig_emb_dim
+        
+        # Freeze or not
+        if freeze:
+            for param in self.encoder.parameters():
+                param.requires_grad = False
+
+    def forward(self, images):
+        """
+        images: shape [B, 3, H, W], float in [0..1]
+        returns: [B, output_dim] (the final embedding)
+        """
+        # Hugging Face DINO expects [0..1] -> transformed pixel_values
+        # We'll do minimal preprocessing here; see preprocess_for_encoder
+        inputs = self.processor(images, return_tensors="pt")['pixel_values'].to(images.device)
+        outputs = self.encoder(inputs)
+        pooled = outputs.pooler_output  # [B, 768]
+        return self.proj(pooled)
+
+
+class ConvNeXtV2TinyEncoder(nn.Module):
+    """
+    Loads ConvNeXtV2-Tiny from timm with preprocessing.
+    """
+    def __init__(self, output_dim=1024, freeze=True):
+        super().__init__()
+        model_name = "convnextv2_tiny.fcmae_in22k"
+
+        self.encoder = timm.create_model(model_name, pretrained=True, num_classes=0)
+
+        self.data_config = timm.data.resolve_model_data_config(self.encoder)
+        self.transforms = timm.data.create_transform(
+            **self.data_config, is_training=False, use_prefetcher=False
+        )
+
+        self.orig_emb_dim = self.encoder.num_features
+        if output_dim is not None and output_dim != self.orig_emb_dim:
+            self.proj = nn.Linear(self.orig_emb_dim, output_dim)
+            self.output_dim = output_dim
+        else:
+            self.proj = nn.Identity()
+            self.output_dim = self.orig_emb_dim
+
+        if freeze:
+            for param in self.encoder.parameters():
+                param.requires_grad = False
+
+    def forward(self, images):
+        """
+        images: [B, 3, H, W], float in [0..1]
+        """
+        images = self.transforms(images)
+        feats = self.encoder(images)
+        return self.proj(feats)
+
+
+class EfficientNetB0Encoder(nn.Module):
+    """
+    Loads EfficientNet-B0 from timm with preprocessing.
+    """
+    def __init__(self, output_dim=1024, freeze=True):
+        super().__init__()
+        model_name = "efficientnet_b0"
+
+        self.encoder = timm.create_model(model_name, pretrained=True, num_classes=0)
+
+        self.data_config = timm.data.resolve_model_data_config(self.encoder)
+        self.transforms = timm.data.create_transform(
+            **self.data_config, is_training=False, use_prefetcher=False
+        )
+
+        self.orig_emb_dim = self.encoder.num_features
+        if output_dim is not None and output_dim != self.orig_emb_dim:
+            self.proj = nn.Linear(self.orig_emb_dim, output_dim)
+            self.output_dim = output_dim
+        else:
+            self.proj = nn.Identity()
+            self.output_dim = self.orig_emb_dim
+
+        if freeze:
+            for param in self.encoder.parameters():
+                param.requires_grad = False
+
+    def forward(self, images):
+        """
+        images: [B, 3, H, W], float in [0..1]
+        """
+        images = self.transforms(images)
+        feats = self.encoder(images)
+        return self.proj(feats)

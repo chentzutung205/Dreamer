@@ -14,7 +14,7 @@ from collections import OrderedDict
 
 import env_wrapper
 from replay_buffer import ReplayBuffer
-from models import RSSM, ConvEncoder, ConvDecoder, DenseDecoder, ActionDecoder
+from models import RSSM, ConvEncoder, ConvDecoder, DenseDecoder, ActionDecoder, build_pretrained_encoder
 from utils import *
 import json
 
@@ -47,12 +47,34 @@ class Dreamer:
         self.device = device
         self.restore = args["restore"]
         self.restore_path = args["checkpoint_path"]
+        self.encoder_type = args.get("encoder_type")
+        self.freeze_encoder = args.get("freeze_encoder", False)
         self.data_buffer = ReplayBuffer(self.args["buffer_size"], self.obs_shape, self.action_size,
                                                     self.args["train_seq_len"], self.args["batch_size"])
 
         self._build_model(restore=self.restore)
 
     def _build_model(self, restore):
+
+        if self.encoder_type in ["cnn"]:
+            print("Using Original CNN Encoder")
+            self.obs_encoder = ConvEncoder(input_shape=self.obs_shape,
+                                        embed_size=self.args["obs_embed_size"],
+                                        activation=self.args["cnn_activation_function"]).to(self.device)
+        else:
+            if self.args["obs_embed_size"] == 0:
+                self.obs_encoder = build_pretrained_encoder(encoder_type=self.encoder_type,
+                                                            output_dim=None,  # Use native size
+                                                            freeze=self.freeze_encoder).to(self.device)
+                # Retrieve the native dimension
+                native_embed_size = self.obs_encoder.output_dim
+            else:
+                self.obs_encoder = build_pretrained_encoder(encoder_type=self.encoder_type,
+                                                            output_dim=self.args["obs_embed_size"],
+                                                            freeze=self.freeze_encoder).to(self.device)
+                native_embed_size = self.args["obs_embed_size"]
+
+            self.args["obs_embed_size"] = native_embed_size
 
         self.rssm = RSSM(
                     action_size =self.action_size,
@@ -69,10 +91,6 @@ class Dreamer:
                      units = self.args["num_units"],
                      n_layers=4,
                      activation=self.args["dense_activation_function"]).to(self.device)
-        self.obs_encoder  = ConvEncoder(
-                            input_shape= self.obs_shape,
-                            embed_size = self.args["obs_embed_size"],
-                            activation =self.args["cnn_activation_function"]).to(self.device)
         self.obs_decoder  = ConvDecoder(
                             stoch_size = self.args["stoch_size"],
                             deter_size = self.args["deter_size"],
@@ -127,8 +145,23 @@ class Dreamer:
 
     def world_model_loss(self, obs, acs, rews, nonterms):
 
-        obs = preprocess_obs(obs)
-        obs_embed = self.obs_encoder(obs[1:])
+        seq_len = obs.shape[0]
+        batch_size = obs.shape[1]
+
+        # Decide preprocessing based on encoder type
+        if self.encoder_type == "cnn":
+            obs = preprocess_obs(obs)
+            obs_embed = self.obs_encoder(obs[1:])
+        
+        else:  # Pretrained encoder 
+            # Reshape [seq_len-1, batch_size, C, H, W] -> [batch_size * (seq_len-1), C, H, W]
+            batch_images = obs[1:].reshape(-1, *obs.shape[2:]).to(self.device)
+
+            # Pass through pretrained encoder
+            obs_embed = self.obs_encoder(batch_images)
+
+            # Reshape back to [seq_len-1, batch_size, emb_dim]
+            obs_embed = obs_embed.view(seq_len - 1, batch_size, -1)
         init_state = self.rssm.init_state(self.args["batch_size"], self.device)
         prior, self.posterior = self.rssm.observe_rollout(obs_embed, acs[:-1], nonterms[:-1], init_state, self.args["train_seq_len"]-1)
         features = torch.cat([self.posterior['stoch'], self.posterior['deter']], dim=-1)
@@ -240,7 +273,12 @@ class Dreamer:
 
         obs = obs['image']
         obs  = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
-        obs_embed = self.obs_encoder(preprocess_obs(obs))
+        if self.encoder_type == "cnn":
+            processed_obs = preprocess_obs(obs)
+            obs_embed = self.obs_encoder(processed_obs)
+        else:
+            obs_embed = self.obs_encoder(obs.to(self.device))
+
         _, posterior = self.rssm.observe_step(prev_state, prev_action, obs_embed)
         features = torch.cat([posterior['stoch'], posterior['deter']], dim=-1)
         action = self.actor(features, deter=not explore) 
@@ -368,6 +406,9 @@ def main():
     # Allow overriding some flags
     parser.add_argument('--train', action='store_true', help='Train the model')
     parser.add_argument('--env', type=str, help='Environment name')
+    parser.add_argument('--encoder_type', type=str, default="cnn", help='Image Encoder "dino", "convnext", "efficientnet", or original "cnn"')
+    parser.add_argument('--freeze_encoder', action='store_true', help='Whether to allow gradient flow (pretrained encoder only)')
+    parser.add_argument('--obs_embed_size', type=int, default=1024, help='Encoder embedding size, original (1024) others "0" for auto')
     parser.add_argument('--evaluate', action='store_true', help='Evaluate the model')
     parser.add_argument('--restore', action='store_true', help='Restore model from checkpoint')
     parser.add_argument('--no-gpu', action='store_true', help="Disable GPU")
@@ -381,6 +422,9 @@ def main():
     # Override config with command-line flags if needed.
     config["train"] = args.train
     config["env"] = args.env
+    config["encoder_type"] = args.encoder_type
+    config["freeze_encoder"] = args.freeze_encoder
+    config["obs_embed_size"] = args.obs_embed_size
     config["evaluate"] = args.evaluate
     config["restore"] = True if args.evaluate else False
     config["no_gpu"] = args.no_gpu
