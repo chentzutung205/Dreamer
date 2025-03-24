@@ -155,6 +155,8 @@ class Dreamer:
             obs_embed = self.obs_encoder(obs[1:])
         
         else:  # Pretrained encoder 
+            obs = obs.to(self.device) / 255.0
+
             # Reshape [seq_len-1, batch_size, C, H, W] -> [batch_size * (seq_len-1), C, H, W]
             batch_images = obs[1:].reshape(-1, *obs.shape[2:]).to(self.device)
 
@@ -283,7 +285,9 @@ class Dreamer:
             processed_obs = preprocess_obs(obs)
             obs_embed = self.obs_encoder(processed_obs)
         else:
-            obs_embed = self.obs_encoder(obs.to(self.device))
+            processed_obs = obs/ 255.0
+
+            obs_embed = self.obs_encoder(processed_obs.to(self.device))
 
         _, posterior = self.rssm.observe_step(prev_state, prev_action, obs_embed)
         features = torch.cat([posterior['stoch'], posterior['deter']], dim=-1)

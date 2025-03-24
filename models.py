@@ -483,40 +483,118 @@ class ConvNeXtV2TinyEncoder(nn.Module):
         return self.proj(feats)
 
 
+import timm
+import torch
+import torch.nn as nn
+
 class EfficientNetB0Encoder(nn.Module):
     """
     Loads EfficientNet-B0 from timm with preprocessing.
+    Optionally extracts features from an intermediate block specified by block_index.
+    If pool_size is provided, applies AdaptiveAvgPool2d with that output size.
+    Otherwise, it directly flattens the feature map.
+    Finally, applies a projection to map the flattened features to output_dim.
+    Freezing of the encoder is maintained as in your current code.
     """
-    def __init__(self, output_dim=1024, freeze=True):
+    def __init__(self, output_dim=1024, freeze=True, block_index=2, pool_size=None):
+        """
+        Args:
+            output_dim (int): Desired output embedding dimension.
+            freeze (bool): If True, freeze the encoder parameters.
+            block_index (int or None): If provided, extracts features from that block
+                                       (e.g., 2 means use features from self.encoder.blocks[2]).
+                                       If None, uses the final features (forward_features).
+            pool_size (tuple or None): If provided, applies AdaptiveAvgPool2d with this output size.
+                                       If None, no additional pooling is applied (features are directly flattened).
+        """
         super().__init__()
         model_name = "efficientnet_b0"
-
         self.encoder = timm.create_model(model_name, pretrained=True, num_classes=0)
 
         self.data_config = timm.data.resolve_model_data_config(self.encoder)
-        target_size = 112  # You can try 96, 128, etc.
+        target_size = 112  # You can try 96, 112, 128, etc.
         self.data_config['input_size'] = (3, target_size, target_size)
         self.transforms = timm.data.create_transform(
             **self.data_config, is_training=False, use_prefetcher=False
         )
+        
+        self.block_index = block_index
 
-        self.orig_emb_dim = self.encoder.num_features
-        if output_dim is not None and output_dim != self.orig_emb_dim:
-            print(f"[INFO] Projecting to {output_dim}")
-            self.proj = nn.Linear(self.orig_emb_dim, output_dim)
+        # Determine output channels:
+        # If block_index is None, we'll use final features (from forward_features)
+        # Otherwise, we extract from an earlier block.
+        block_channels = {0: 16, 1: 24, 2: 40, 3: 80, 4: 112, 5: 192, 6: 320}
+        if self.block_index is None:
+            self.out_channels = self.encoder.num_features  # typically 1280 for EfficientNet-B0.
+        else:
+            self.out_channels = block_channels.get(self.block_index, None)
+            if self.out_channels is None:
+                raise ValueError("Invalid block_index provided.")
+
+        self.pool_size = pool_size
+        if self.pool_size is not None:
+            # Use specified pooling; output dimensions will be exactly pool_size.
+            self.pool = nn.AdaptiveAvgPool2d(self.pool_size)
+            flattened_dim = self.out_channels * self.pool_size[0] * self.pool_size[1]
+        else:
+            self.pool = None
+            # Dynamically compute the flattened dimension by passing a dummy input.
+            # Create a dummy tensor with the target input size.
+            dummy = torch.zeros(1, 3, target_size, target_size)
+            dummy = self.transforms(dummy)
+            if self.block_index is None:
+                feats_dummy = self.encoder.forward_features(dummy)
+            else:
+                x = self.encoder.conv_stem(dummy)
+                x = self.encoder.bn1(x)
+                for idx in range(self.block_index + 1):
+                    x = self.encoder.blocks[idx](x)
+                feats_dummy = x
+            # feats_dummy should have shape [1, C, H, W]
+            _, c, h, w = feats_dummy.shape
+            flattened_dim = c * h * w
+
+        # Set up the projection layer.
+        if output_dim != flattened_dim:
+            print(f"[INFO] Projecting from {flattened_dim} to {output_dim}")
+            self.proj = nn.Linear(flattened_dim, output_dim)
             self.output_dim = output_dim
         else:
             self.proj = nn.Identity()
-            self.output_dim = self.orig_emb_dim
+            self.output_dim = flattened_dim
 
+        # Freezing the encoder parameters.
         if freeze:
             for param in self.encoder.parameters():
                 param.requires_grad = False
+            # Keep the encoder in train mode so BN layers update their running stats.
+            self.encoder.train()
+            for m in self.encoder.modules():
+                if isinstance(m, (nn.BatchNorm2d, nn.BatchNorm1d)):
+                    m.track_running_stats = True
+                    m.momentum = 0.1
 
     def forward(self, images):
         """
-        images: [B, 3, H, W], float in [0..1]
+        Args:
+            images: Tensor of shape [B, 3, H, W] with float values in [0, 1].
+        Returns:
+            Projected embeddings of shape [B, output_dim].
         """
         images = self.transforms(images)
-        feats = self.encoder(images)
-        return self.proj(feats)
+
+        if self.block_index is None:
+            feats = self.encoder.forward_features(images)  # shape: [B, 1280, H', W']
+        else:
+            x = self.encoder.conv_stem(images)
+            x = self.encoder.bn1(x)
+            for idx in range(self.block_index + 1):
+                x = self.encoder.blocks[idx](x)
+            feats = x  # shape: [B, out_channels, H', W']
+
+        if self.pool is not None:
+            x = self.pool(feats)
+        else:
+            x = feats
+        flat = x.flatten(1)
+        return self.proj(flat)
