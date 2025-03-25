@@ -389,7 +389,7 @@ from transformers import AutoImageProcessor, Dinov2Model
 # For EfficientNet, ConvNeXt
 import timm
 
-def build_pretrained_encoder(encoder_type="dino", output_dim=1024, freeze=True):
+def build_pretrained_encoder(encoder_type="dino", output_dim=1024, freeze=True, block_index=3):
     """
     Returns a nn.Module that extracts features from the selected encoder.
     encoder_type: "dino", "convnext", or "efficientnet"
@@ -404,7 +404,7 @@ def build_pretrained_encoder(encoder_type="dino", output_dim=1024, freeze=True):
         return ConvNeXtV2TinyEncoder(output_dim=output_dim, freeze=freeze)
     elif encoder_type.lower() == "efficientnet":
         print("Using EfficientNetB0 Encoder", freeze)
-        return EfficientNetB0Encoder(output_dim=output_dim, freeze=freeze)
+        return EfficientNetB0Encoder(output_dim=output_dim, freeze=freeze, block_index=block_index)
     else:
         raise ValueError(f"Unknown encoder_type: {encoder_type}")
 
@@ -496,7 +496,7 @@ class EfficientNetB0Encoder(nn.Module):
     Finally, applies a projection to map the flattened features to output_dim.
     Freezing of the encoder is maintained as in your current code.
     """
-    def __init__(self, output_dim=1024, freeze=True, block_index=2, pool_size=None):
+    def __init__(self, output_dim=1024, freeze=True, block_index=3, pool_size=None):
         """
         Args:
             output_dim (int): Desired output embedding dimension.

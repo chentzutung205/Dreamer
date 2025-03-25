@@ -49,6 +49,7 @@ class Dreamer:
         self.restore_path = args["checkpoint_path"]
         self.encoder_type = args.get("encoder_type")
         self.freeze_encoder = args.get("freeze_encoder", False)
+        self.block_index = args["block_index"]
         self.scaler = torch.amp.GradScaler()
         self.data_buffer = ReplayBuffer(self.args["buffer_size"], self.obs_shape, self.action_size,
                                                     self.args["train_seq_len"], self.args["batch_size"])
@@ -66,13 +67,13 @@ class Dreamer:
             if self.args["obs_embed_size"] == 0:
                 self.obs_encoder = build_pretrained_encoder(encoder_type=self.encoder_type,
                                                             output_dim=None,  # Use native size
-                                                            freeze=self.freeze_encoder).to(self.device)
+                                                            freeze=self.freeze_encoder, block_index=self.block_index).to(self.device)
                 # Retrieve the native dimension
                 native_embed_size = self.obs_encoder.output_dim
             else:
                 self.obs_encoder = build_pretrained_encoder(encoder_type=self.encoder_type,
                                                             output_dim=self.args["obs_embed_size"],
-                                                            freeze=self.freeze_encoder).to(self.device)
+                                                            freeze=self.freeze_encoder, block_index=self.block_index).to(self.device)
                 native_embed_size = self.args["obs_embed_size"]
 
             self.args["obs_embed_size"] = native_embed_size
@@ -418,6 +419,7 @@ def main():
     parser.add_argument('--env', type=str, help='Environment name')
     parser.add_argument('--encoder_type', type=str, default="cnn", help='Image Encoder "dino", "convnext", "efficientnet", or original "cnn"')
     parser.add_argument('--freeze_encoder', action='store_true', help='Whether to allow gradient flow (pretrained encoder only)')
+    parser.add_argument("--block_index", type=int, default=3, help="Block layer to get encoder features")
     parser.add_argument('--obs_embed_size', type=int, default=1024, help='Encoder embedding size, original (1024) others "0" for auto')
     parser.add_argument('--evaluate', action='store_true', help='Evaluate the model')
     parser.add_argument('--restore', action='store_true', help='Restore model from checkpoint')
@@ -434,6 +436,7 @@ def main():
     config["env"] = args.env
     config["encoder_type"] = args.encoder_type
     config["freeze_encoder"] = args.freeze_encoder
+    config["block_index"] = args.block_index
     config["obs_embed_size"] = args.obs_embed_size
     config["evaluate"] = args.evaluate
     config["restore"] = True if args.evaluate else False
