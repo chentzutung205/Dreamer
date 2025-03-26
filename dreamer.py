@@ -462,6 +462,8 @@ def main():
         logdir = os.path.join(data_path, logdir)
         if not os.path.exists(logdir):
             os.makedirs(logdir)
+        with open(os.path.join(logdir,'config.json'), 'w') as f:
+            json.dump(config, f, indent=4)
 
     # Set seeds for reproducibility.
     random.seed(config["seed"])

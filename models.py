@@ -403,7 +403,7 @@ def build_pretrained_encoder(encoder_type="dino", output_dim=1024, freeze=True, 
         print("Using ConvNeXtV2Tiny Encoder")
         return ConvNeXtV2TinyEncoder(output_dim=output_dim, freeze=freeze)
     elif encoder_type.lower() == "efficientnet":
-        print("Using EfficientNetB0 Encoder", freeze)
+        print("Using EfficientNetB0 Encoder", freeze, "Block IDX: ", block_index)
         return EfficientNetB0Encoder(output_dim=output_dim, freeze=freeze, block_index=block_index)
     else:
         raise ValueError(f"Unknown encoder_type: {encoder_type}")
