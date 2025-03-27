@@ -45,7 +45,7 @@ class Dreamer:
         self.obs_shape = obs_shape
         self.action_size = action_size
         self.device = device
-        self.restore = args["restore"]
+        self.restore = restore
         self.restore_path = args["checkpoint_path"]
         self.encoder_type = args.get("encoder_type")
         self.freeze_encoder = args.get("freeze_encoder", False)
@@ -381,9 +381,8 @@ class Dreamer:
         return np.array(seed_episode_rews)
 
     def save(self, save_path):
-
-        torch.save(
-            {'rssm' : self.rssm.state_dict(),
+        checkpoint = {
+            'rssm': self.rssm.state_dict(),
             'actor': self.actor.state_dict(),
             'reward_model': self.reward_model.state_dict(),
             'obs_encoder': self.obs_encoder.state_dict(),
@@ -391,10 +390,22 @@ class Dreamer:
             'discount_model': self.discount_model.state_dict() if self.args["use_disc_model"] else None,
             'actor_optimizer': self.actor_opt.state_dict(),
             'value_optimizer': self.value_opt.state_dict(),
-            'world_model_optimizer': self.world_model_opt.state_dict(),}, save_path)
+            'world_model_optimizer': self.world_model_opt.state_dict(),
+            # Save additional training state:
+            'data_buffer': self.data_buffer,  # Assumes replay buffer is picklable
+            'buffer_steps': self.data_buffer.steps,
+            'buffer_episodes': self.data_buffer.episodes,
+            # Optionally, save RNG states:
+            'torch_rng_state': torch.get_rng_state(),
+            'cuda_rng_state': torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+            'np_rng_state': np.random.get_state(),
+            'py_rng_state': random.getstate(),
+        }
+        torch.save(checkpoint, save_path)
+
 
     def restore_checkpoint(self, ckpt_path):
-        print(f"Attempting to load checkpoint from: {ckpt_path}")  # Debugging step
+        print(f"Attempting to load checkpoint from: {ckpt_path}")
         if not ckpt_path or not os.path.exists(ckpt_path):
             raise FileNotFoundError(f"Checkpoint file not found: {ckpt_path}")
 
@@ -411,12 +422,26 @@ class Dreamer:
         self.actor_opt.load_state_dict(checkpoint['actor_optimizer'])
         self.value_opt.load_state_dict(checkpoint['value_optimizer'])
 
+        # Restore replay buffer and counters.
+        if 'data_buffer' in checkpoint:
+            self.data_buffer = checkpoint['data_buffer']
+            print(f"Restored replay buffer with {self.data_buffer.episodes} episodes and {self.data_buffer.steps} steps.")
+
+        # Optionally, restore RNG states for reproducibility:
+        torch.set_rng_state(checkpoint['torch_rng_state'])
+        if torch.cuda.is_available() and checkpoint['cuda_rng_state'] is not None:
+            torch.cuda.set_rng_state_all(checkpoint['cuda_rng_state'])
+        np.random.set_state(checkpoint['np_rng_state'])
+        random.setstate(checkpoint['py_rng_state'])
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, required=True, help='Path to configuration JSON file')
     # Allow overriding some flags
     parser.add_argument('--train', action='store_true', help='Train the model')
     parser.add_argument('--env', type=str, help='Environment name')
+    parser.add_argument('--seed', type=int, default=1, help='Environment seed')
     parser.add_argument('--encoder_type', type=str, default="cnn", help='Image Encoder "dino", "convnext", "efficientnet", or original "cnn"')
     parser.add_argument('--freeze_encoder', action='store_true', help='Whether to allow gradient flow (pretrained encoder only)')
     parser.add_argument("--block_index", type=int, default=3, help="Block layer to get encoder features")
@@ -432,14 +457,17 @@ def main():
     config = load_config(args.config)
 
     # Override config with command-line flags if needed.
-    config["train"] = args.train
-    config["env"] = args.env
-    config["encoder_type"] = args.encoder_type
-    config["freeze_encoder"] = args.freeze_encoder
-    config["block_index"] = args.block_index
-    config["obs_embed_size"] = args.obs_embed_size
+    if not args.restore:
+        config["env"] = args.env
+        config["seed"] = args.seed
+        config["encoder_type"] = args.encoder_type
+        config["freeze_encoder"] = args.freeze_encoder
+        config["block_index"] = args.block_index
+        config["obs_embed_size"] = args.obs_embed_size
+        
+    config["restore"] = True if args.evaluate else args.restore
     config["evaluate"] = args.evaluate
-    config["restore"] = True if args.evaluate else False
+    config["train"] = args.train
     config["no_gpu"] = args.no_gpu
     config["render"] = args.render
     config["checkpoint_path"] = args.checkpoint_path
@@ -454,16 +482,25 @@ def main():
         if not os.path.exists(logdir):
             os.makedirs(logdir)
     else:
-        data_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data')
-        if not os.path.exists(data_path):
-            os.makedirs(data_path)
-        logdir = "{}_{}_{}_{}".format(config["env"], config["algo"], config["exp-name"],
-                                       time.strftime("%d-%m-%Y-%H-%M-%S"))
-        logdir = os.path.join(data_path, logdir)
-        if not os.path.exists(logdir):
-            os.makedirs(logdir)
-        with open(os.path.join(logdir,'config.json'), 'w') as f:
-            json.dump(config, f, indent=4)
+        if args.restore:
+            # If resuming training, infer logdir from the checkpoint path.
+            # Assumes the checkpoint is stored in a subfolder ("ckpts") inside the log directory.
+            ckpt_dir = os.path.dirname(os.path.realpath(config["checkpoint_path"]))
+            logdir = os.path.dirname(ckpt_dir)
+            print(f"Resuming logs in: {logdir}")
+        else:
+            data_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data')
+            if not os.path.exists(data_path):
+                os.makedirs(data_path)
+            
+            slurm_id = os.environ.get("SLURM_JOB_ID", "nojobid")
+            logdir = "{}_{}_{}_{}_{}".format(config["env"], config["algo"], config["exp-name"],
+                                             time.strftime("%d-%m-%Y-%H-%M-%S"), slurm_id)
+            logdir = os.path.join(data_path, logdir)
+            if not os.path.exists(logdir):
+                os.makedirs(logdir)
+            with open(os.path.join(logdir, 'config.json'), 'w') as f:
+                json.dump(config, f, indent=4)
 
     # Set seeds for reproducibility.
     random.seed(config["seed"])
@@ -491,10 +528,11 @@ def main():
     logger = Logger(logdir)
 
     if config["train"]:
-        seed_episode_rews = dreamer.collect_random_episodes(train_env, config["seed-steps"] // config["action-repeat"])
-        global_step = dreamer.data_buffer.steps * config["action-repeat"]
+        if not args.restore:
+            seed_episode_rews = dreamer.collect_random_episodes(train_env, config["seed-steps"] // config["action-repeat"])
+            global_step = dreamer.data_buffer.steps * config["action-repeat"]
 
-        initial_logs = {
+            initial_logs = {
             'train_avg_reward': np.mean(seed_episode_rews),
             'train_max_reward': np.max(seed_episode_rews),
             'train_min_reward': np.min(seed_episode_rews),
@@ -503,9 +541,15 @@ def main():
             'eval_max_reward': np.max(seed_episode_rews),
             'eval_min_reward': np.min(seed_episode_rews),
             'eval_std_reward': np.std(seed_episode_rews),
-        }
-        logger.log_scalars(initial_logs, step=0)
-        logger.flush()
+            }
+            logger.log_scalars(initial_logs, step=0)
+            logger.flush()
+        else:
+            # Resume training: use the stored step count from the loaded replay buffer.
+            global_step = dreamer.data_buffer.steps * config["action-repeat"]
+            print(f"Resuming training from global step {global_step}")
+
+        
 
         while global_step <= config["total_steps"]:
             print("##################################")
