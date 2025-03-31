@@ -40,7 +40,7 @@
   "scalar-freq": 1000,
   "log-video-freq": -1,
   "max_videos_to_save": 2,
-  "checkpoint-interval": 5000,
+  "checkpoint-interval": 10000,
   "checkpoint_path": "",
   "restore": false
 }

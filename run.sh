@@ -2,7 +2,7 @@
 #SBATCH -J Dreamer                    # Job name
 #SBATCH --ntasks=1
 #SBATCH --time=8:0:0
-#SBATCH --mem=32G
+#SBATCH --mem=64G
 #SBATCH --gres=gpu:RTX_6000:1
 #SBATCH --account=gts-agarg35
 #SBATCH -q embers                               # QOS Name

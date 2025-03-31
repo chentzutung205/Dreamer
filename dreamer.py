@@ -50,7 +50,6 @@ class Dreamer:
         self.encoder_type = args.get("encoder_type")
         self.freeze_encoder = args.get("freeze_encoder", False)
         self.block_index = args["block_index"]
-        self.scaler = torch.amp.GradScaler()
         self.data_buffer = ReplayBuffer(self.args["buffer_size"], self.obs_shape, self.action_size,
                                                     self.args["train_seq_len"], self.args["batch_size"])
 
@@ -253,28 +252,23 @@ class Dreamer:
         rews = rews.to(self.device).unsqueeze(-1)
         nonterms = (1.0-terms).to(self.device).unsqueeze(-1)
 
-        with torch.amp.autocast(device_type=str(self.device)):
-            model_loss = self.world_model_loss(obs, acs, rews, nonterms)
+        model_loss = self.world_model_loss(obs, acs, rews, nonterms)
         self.world_model_opt.zero_grad()
-        self.scaler.scale(model_loss).backward()
+        model_loss.backward()
         nn.utils.clip_grad_norm_(self.world_model_params, self.args["grad_clip_norm"])
-        self.scaler.step(self.world_model_opt)
+        self.world_model_opt.step()
 
-        with torch.amp.autocast(device_type=str(self.device)):
-            actor_loss = self.actor_loss()
+        actor_loss = self.actor_loss()
         self.actor_opt.zero_grad()
-        self.scaler.scale(actor_loss).backward()
+        actor_loss.backward()
         nn.utils.clip_grad_norm_(self.actor.parameters(), self.args["grad_clip_norm"])
-        self.scaler.step(self.actor_opt)
+        self.actor_opt.step()
 
-        with torch.amp.autocast(device_type=str(self.device)):
-            value_loss = self.value_loss()
+        value_loss = self.value_loss()
         self.value_opt.zero_grad()
-        self.scaler.scale(value_loss).backward()
+        value_loss.backward()
         nn.utils.clip_grad_norm_(self.value_model.parameters(), self.args["grad_clip_norm"])
-        self.scaler.step(self.value_opt)
-
-        self.scaler.update()
+        self.value_opt.step()
 
         return model_loss.item(), actor_loss.item(), value_loss.item()
 
