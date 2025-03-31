@@ -1,5 +1,5 @@
 {
-  "env": "cheetah-run",
+  "env": "walker-walk",
   "algo": "Dreamerv2",
   "exp-name": "lr1e-3",
   "seed": 1,
