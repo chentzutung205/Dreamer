@@ -57,7 +57,7 @@ class DeepMindControl:
         obs = dict(time_step.observation)
         #Extract proprioception
         proprio_obs = []
-        for key in obs:
+        for key in sorted(obs.keys()):
             proprio_obs.append(obs[key].flatten())  # Flatten in case it's multi-dimensional
         
         if proprio_obs:
@@ -76,7 +76,7 @@ class DeepMindControl:
         obs = dict(time_step.observation)
         # Extract proprioception data
         proprio_obs = []
-        for key in obs:
+        for key in sorted(obs.keys()):
             proprio_obs.append(obs[key].flatten())  # Flatten in case it's multi-dimensional
         
         if proprio_obs:

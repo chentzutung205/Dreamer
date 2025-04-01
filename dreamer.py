@@ -18,7 +18,9 @@ from models import RSSM, ConvEncoder, ConvDecoder, DenseDecoder, ActionDecoder, 
 from utils import *
 import json
 
+
 os.environ['MUJOCO_GL'] = 'egl'
+
 
 def load_config(config_path):
     if not os.path.exists(config_path):
@@ -27,6 +29,7 @@ def load_config(config_path):
     with open(config_path, 'r') as f:
         config = json.load(f)
     return config
+
 
 def make_env(config):
     if config.get("env") is None:
@@ -39,14 +42,22 @@ def make_env(config):
     env = env_wrapper.TimeLimit(env, config["time-limit"] / config["action-repeat"])
     return env
 
-def preprocess_obs(obs):
+
+def preprocess_img(obs):
     obs = obs.to(torch.float32) / 255.0 - 0.5
     return obs
 
-#TODO: currently not being used. Needs to be modified.
+
+# Batch-wise standardization (Output will have mean ~ 0, std ~ 1 per feature dimension)
 def preprocess_proprio(obs):
-    obs = obs.to(torch.float32) / 255.0 - 0.5
-    return obs
+    # Not enough samples to compute std => skip normalization
+    if obs.shape[0] <= 1:
+        return obs
+    
+    mean = obs.mean(dim=0, keepdim=True)
+    std = obs.std(dim=0, keepdim=True)
+    return (obs - mean) / torch.clamp(std, min=1e-3)
+
 
 class Dreamer:
     def __init__(self, args, obs_shape, proprio_size, action_size, device, restore=False):
@@ -59,33 +70,34 @@ class Dreamer:
         self.restore = args["restore"]
         self.restore_path = args["checkpoint_path"]
         self.data_buffer = ReplayBuffer(self.args["buffer_size"], self.obs_shape, self.proprio_size,self.action_size,
-                                                    self.args["train_seq_len"], self.args["batch_size"])
+                                        self.args["train_seq_len"], self.args["batch_size"])
 
         self._build_model(restore=self.restore)
+
 
     def _build_model(self, restore):
 
         self.rssm = RSSM(
-                    action_size =self.action_size,
+                    action_size = self.action_size,
                     stoch_size = self.args["stoch_size"],
                     deter_size = self.args["deter_size"],
                     hidden_size = self.args["deter_size"],
                     obs_embed_size = self.args["obs_embed_size"],
-                    proprio_size = 32,              #embedded size of proprioception, can be further tuned.
-                    activation =self.args["dense_activation_function"]).to(self.device)
+                    proprio_size = 32,              # Embedded size of proprioception, can be further tuned.
+                    activation = self.args["dense_activation_function"]).to(self.device)
 
         self.actor = ActionDecoder(
-                     action_size = self.action_size,
-                     stoch_size = self.args["stoch_size"],
-                     deter_size = self.args["deter_size"],
-                     units = self.args["num_units"],
-                     n_layers=4,
-                     activation=self.args["dense_activation_function"]).to(self.device)
+                    action_size = self.action_size,
+                    stoch_size = self.args["stoch_size"],
+                    deter_size = self.args["deter_size"],
+                    units = self.args["num_units"],
+                    n_layers = 4,
+                    activation = self.args["dense_activation_function"]).to(self.device)
         
         self.obs_encoder  = ConvEncoder(
                             input_shape= self.obs_shape,
                             embed_size = self.args["obs_embed_size"],
-                            activation =self.args["cnn_activation_function"]).to(self.device)
+                            activation = self.args["cnn_activation_function"]).to(self.device)
 
         self.obs_decoder  = ConvDecoder(
                             stoch_size = self.args["stoch_size"],
@@ -93,27 +105,32 @@ class Dreamer:
                             output_shape=self.obs_shape,
                             activation = self.args["cnn_activation_function"]).to(self.device)
         
-        #Proprio_encoder and decoder, decoder is not used currently, since reconstructing proprioception is not considered for now.
-        self.proprio_encoder = ProprioEncoder(input_dim=self.proprio_size, hidden_dim=64, output_dim=32).to(self.device)
+        # Proprio_encoder and decoder, decoder is not used currently, since reconstructing proprioception is not considered for now.
+        self.proprio_encoder = ProprioEncoder(input_dim = self.proprio_size, 
+                                              hidden_dim = 64, 
+                                              output_dim = 32).to(self.device)
 
-        self.proprio_decoder = ProprioDecoder(input_dim=32, hidden_dim=64, output_dim=self.proprio_size).to(self.device) #TODO: not being used currently.
+        self.proprio_decoder = ProprioDecoder(input_dim = 32, 
+                                              hidden_dim = 64, 
+                                              output_dim = self.proprio_size).to(self.device) #TODO: not being used currently.
 
         self.reward_model = DenseDecoder(
                             stoch_size = self.args["stoch_size"],
                             deter_size = self.args["deter_size"],
                             output_shape = (1,),
                             n_layers = 2,
-                            units=self.args["num_units"],
-                            activation= self.args["dense_activation_function"],
+                            units = self.args["num_units"],
+                            activation = self.args["dense_activation_function"],
                             dist = 'normal').to(self.device)
 
+        # Critic
         self.value_model  = DenseDecoder(
                             stoch_size = self.args["stoch_size"],
                             deter_size = self.args["deter_size"],
                             output_shape = (1,),
                             n_layers = 3,
                             units = self.args["num_units"],
-                            activation= self.args["dense_activation_function"],
+                            activation = self.args["dense_activation_function"],
                             dist = 'normal').to(self.device)
 
         if self.args["use_disc_model"]:
@@ -122,8 +139,8 @@ class Dreamer:
                                 deter_size = self.args["deter_size"],
                                 output_shape = (1, ),
                                 n_layers = 2,
-                                units=self.args["num_units"],
-                                activation= self.args["dense_activation_function"],
+                                units = self.args["num_units"],
+                                activation = self.args["dense_activation_function"],
                                 dist = 'binary').to(self.device)
         
         if self.args["use_disc_model"]:
@@ -147,21 +164,22 @@ class Dreamer:
         if restore:
             self.restore_checkpoint(self.restore_path)
 
-    def world_model_loss(self, obs_image,obs_proprio, acs, rews, nonterms):
 
-        #obs = preprocess_obs(obs)
-        obs = preprocess_obs(obs_image)
-        obs_embed = self.obs_encoder(obs[1:])
+    def world_model_loss(self, obs_image, obs_proprio, acs, rews, nonterms):
+
+        img_obs = preprocess_img(obs_image)
+        obs_embed = self.obs_encoder(img_obs[1:])
         init_state = self.rssm.init_state(self.args["batch_size"], self.device)
         
-        #features of concatenated images and proprioception
-        proprio = self.proprio_encoder(obs_proprio[1:])
-        prior, self.posterior = self.rssm.observe_rollout(obs_embed,proprio, acs[:-1], nonterms[:-1], init_state, self.args["train_seq_len"]-1)
+        # Features of concatenated images and proprioception
+        proprio_obs = preprocess_proprio(obs_proprio)
+        proprio_embed = self.proprio_encoder(proprio_obs[1:])
+        prior, self.posterior = self.rssm.observe_rollout(obs_embed, proprio_embed, acs[:-1], nonterms[:-1], init_state, self.args["train_seq_len"]-1)
         features = torch.cat([self.posterior['stoch'], self.posterior['deter']], dim=-1)
         rew_dist = self.reward_model(features)
         
-        #getting features of images only
-        prior_image,posterior_image = self.rssm.observe_image_rollout(obs_embed, acs[:-1], nonterms[:-1], init_state, self.args["train_seq_len"]-1)
+        # Get features of images only
+        prior_image, posterior_image = self.rssm.observe_image_rollout(obs_embed, acs[:-1], nonterms[:-1], init_state, self.args["train_seq_len"]-1)
         features_image = torch.cat([posterior_image['stoch'], posterior_image['deter']], dim=-1)
         obs_dist = self.obs_decoder(features_image)
 
@@ -177,7 +195,7 @@ class Dreamer:
             post_mean_no_grad, post_std_no_grad = post_no_grad['mean'], post_no_grad['std']
             prior_mean_no_grad, prior_std_no_grad = prior_no_grad['mean'], prior_no_grad['std']
             
-            kl_loss = self.args["kl_alpha"] *(torch.mean(distributions.kl.kl_divergence(
+            kl_loss = self.args["kl_alpha"] * (torch.mean(distributions.kl.kl_divergence(
                                self.rssm.get_dist(post_mean_no_grad, post_std_no_grad), prior_dist)))
             kl_loss += (1-self.args["kl_alpha"]) * (torch.mean(distributions.kl.kl_divergence(
                                post_dist, self.rssm.get_dist(prior_mean_no_grad, prior_std_no_grad))))
@@ -185,7 +203,7 @@ class Dreamer:
             kl_loss = torch.mean(distributions.kl.kl_divergence(post_dist, prior_dist))
             kl_loss = torch.max(kl_loss, kl_loss.new_full(kl_loss.size(), self.args["free_nats"]))
 
-        obs_loss = -torch.mean(obs_dist.log_prob(obs[1:])) 
+        obs_loss = -torch.mean(obs_dist.log_prob(img_obs[1:])) 
         rew_loss = -torch.mean(rew_dist.log_prob(rews[:-1]))
         
         if self.args["use_disc_model"]:
@@ -197,6 +215,7 @@ class Dreamer:
             model_loss = self.args["kl_loss_coeff"] * kl_loss + obs_loss + rew_loss 
         
         return model_loss
+
 
     def actor_loss(self):
 
@@ -240,17 +259,18 @@ class Dreamer:
         
         return value_loss
 
+
     def train_one_batch(self):
 
-        #adding proprioception to buffer
-        obs_iamge,obs_proprio, acs, rews, terms = self.data_buffer.sample()
-        obs_image  = obs_iamge.to(self.device)
+        # Adding proprioception to buffer
+        obs_image, obs_proprio, acs, rews, terms = self.data_buffer.sample()
+        obs_image  = obs_image.to(self.device)
         obs_proprio  = obs_proprio.to(self.device)
         acs  = acs.to(self.device)
         rews = rews.to(self.device).unsqueeze(-1)
-        nonterms = (1.0-terms).to(self.device).unsqueeze(-1)
+        nonterms = (1.0 - terms).to(self.device).unsqueeze(-1)
 
-        model_loss = self.world_model_loss(obs_image,obs_proprio, acs, rews, nonterms)   #corresponds to modified model loss
+        model_loss = self.world_model_loss(obs_image, obs_proprio, acs, rews, nonterms)  # Corresponds to modified model loss
         self.world_model_opt.zero_grad()
         model_loss.backward()
         nn.utils.clip_grad_norm_(self.world_model_params, self.args["grad_clip_norm"])
@@ -270,22 +290,20 @@ class Dreamer:
 
         return model_loss.item(), actor_loss.item(), value_loss.item()
 
-    def act_with_world_model(self, obs_image,obs_proprio, prev_state, prev_action, explore=False):
 
-        #adding proprioception
+    def act_with_world_model(self, obs_image, obs_proprio, prev_state, prev_action, explore=False):
+
         img_obs = obs_image
+        img_obs  = torch.tensor(img_obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
+        obs_embed = self.obs_encoder(preprocess_img(img_obs))
+
+        # Add and encode proprioception
         proprio_obs = obs_proprio
-
-        obs = img_obs
-        obs  = torch.tensor(obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
-        obs_embed = self.obs_encoder(preprocess_obs(obs))
-
-        #encode proprioception
         proprio_obs  = torch.tensor(proprio_obs.copy(), dtype=torch.float32).to(self.device).unsqueeze(0)
-        proprio = self.proprio_encoder(proprio_obs)
+        proprio_embed = self.proprio_encoder(preprocess_proprio(proprio_obs))
         
-        #adding encoded proprioception to rssm
-        _, posterior = self.rssm.observe_step(prev_state, prev_action, obs_embed,proprio)
+        # Adding encoded proprioception to rssm
+        _, posterior = self.rssm.observe_step(prev_state, prev_action, obs_embed, proprio_embed)
         features = torch.cat([posterior['stoch'], posterior['deter']], dim=-1)
         action = self.actor(features, deter=not explore) 
         if explore:
@@ -293,6 +311,8 @@ class Dreamer:
 
         return  posterior, action
 
+
+    # Dreamer interacts with the real environment using its policy
     def act_and_collect_data(self, env, collect_steps):
 
         obs = env.reset()
@@ -305,7 +325,8 @@ class Dreamer:
         for i in range(collect_steps):
 
             with torch.no_grad():
-                posterior, action = self.act_with_world_model(obs['image'],obs['proprio'], prev_state, prev_action, explore=True)   #corresponds to modified world model.
+                posterior, action = self.act_with_world_model(obs['image'], obs['proprio'], prev_state, prev_action, explore=True)  # Corresponds to modified world model.
+            
             action = action[0].cpu().numpy()
             next_obs, rew, done, _ = env.step(action)
             self.data_buffer.add(obs, action, rew, done)
@@ -317,14 +338,16 @@ class Dreamer:
                 done = False
                 prev_state = self.rssm.init_state(1, self.device)
                 prev_action = torch.zeros(1, self.action_size).to(self.device)
-                if i!= collect_steps-1:
+                if i != collect_steps - 1:
                     episode_rewards.append(0.0)
+
             else:
                 obs = next_obs 
                 prev_state = posterior
                 prev_action = torch.tensor(action, dtype=torch.float32).to(self.device).unsqueeze(0)
 
         return np.array(episode_rewards)
+
 
     def evaluate(self, env, eval_episodes, render=False):
 
@@ -340,7 +363,7 @@ class Dreamer:
 
             while not done:
                 with torch.no_grad():
-                    posterior, action = self.act_with_world_model(obs['image'],obs['proprio'], prev_state, prev_action)
+                    posterior, action = self.act_with_world_model(obs['image'], obs['proprio'], prev_state, prev_action)
                 action = action[0].cpu().numpy()
                 next_obs, rew, done, _ = env.step(action)
                 prev_state = posterior
@@ -352,6 +375,7 @@ class Dreamer:
                     video_images[i].append(obs['image'].transpose(1,2,0).copy())
                 obs = next_obs
         return episode_rew, np.array(video_images[:self.args["max_videos_to_save"]])
+
 
     def collect_random_episodes(self, env, seed_steps):
 
@@ -366,18 +390,19 @@ class Dreamer:
             seed_episode_rews[-1] += rew
             if done:
                 obs = env.reset()
-                if i!= seed_steps-1:
+                if i != seed_steps-1:
                     seed_episode_rews.append(0.0)
-                done=False  
+                done = False  
             else:
                 obs = next_obs
 
         return np.array(seed_episode_rews)
 
+
     def save(self, save_path):
 
         torch.save(
-            {'rssm' : self.rssm.state_dict(),
+            {'rssm': self.rssm.state_dict(),
             'actor': self.actor.state_dict(),
             'reward_model': self.reward_model.state_dict(),
             'obs_encoder': self.obs_encoder.state_dict(),
@@ -388,6 +413,7 @@ class Dreamer:
             'actor_optimizer': self.actor_opt.state_dict(),
             'value_optimizer': self.value_opt.state_dict(),
             'world_model_optimizer': self.world_model_opt.state_dict(),}, save_path)
+
 
     def restore_checkpoint(self, ckpt_path):
         print(f"Attempting to load checkpoint from: {ckpt_path}")  # Debugging step
@@ -408,6 +434,7 @@ class Dreamer:
         self.world_model_opt.load_state_dict(checkpoint['world_model_optimizer'])
         self.actor_opt.load_state_dict(checkpoint['actor_optimizer'])
         self.value_opt.load_state_dict(checkpoint['value_optimizer'])
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -472,14 +499,14 @@ def main():
     test_env = make_env(config)
     obs_shape = train_env.observation_space['image'].shape
 
-    #image_shape = train_env.observation_space['image'].shape 
-    proprio_shape = train_env.observation_space['proprio'].shape[0] #some tasks need to  plus 1 for shape, see next line
+    # image_shape = train_env.observation_space['image'].shape
+    proprio_shape = train_env.observation_space['proprio'].shape[0] # Some tasks need to  plus 1 for shape, see next line
     print(train_env.observation_space['proprio'].shape)
-    #proprio_shape = train_env.observation_space['proprio'].shape[0] +1    #some tasks need to  plus 1 for shape (walker-walk)
+    # proprio_shape = train_env.observation_space['proprio'].shape[0] +1    # Some tasks need to  plus 1 for shape (walker-walk)
     action_size = train_env.action_space.shape[0]
 
     # Instantiate Dreamer agent.
-    dreamer = Dreamer(config, obs_shape, proprio_shape, action_size, device, config.get("restore", False))   #corresponds to modified Dreamer with proprioception
+    dreamer = Dreamer(config, obs_shape, proprio_shape, action_size, device, config.get("restore", False))  # Corresponds to modified Dreamer with proprioception
 
     # Create logger.
     logger = Logger(logdir)
@@ -528,9 +555,11 @@ def main():
                     'eval_std_reward': np.std(episode_rews),
                 })
             logger.log_scalars(logs, global_step)
+            
             if config.get("log-video-freq", -1) != -1 and global_step % config["log-video-freq"] == 0:
                 if len(video_images[0]) != 0:
                     logger.log_video(video_images, global_step, config["max_videos_to_save"])
+            
             if global_step % config["checkpoint-interval"] == 0:
                 ckpt_dir = os.path.join(logdir, 'ckpts')
                 if not os.path.exists(ckpt_dir):
