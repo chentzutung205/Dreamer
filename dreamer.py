@@ -83,7 +83,7 @@ class Dreamer:
                     deter_size = self.args["deter_size"],
                     hidden_size = self.args["deter_size"],
                     obs_embed_size = self.args["obs_embed_size"],
-                    proprio_size = 32,              # Embedded size of proprioception, can be further tuned.
+                    proprio_size = self.args["proprio_embed_size"],             # Embedded size of proprioception, can be further tuned.
                     activation = self.args["dense_activation_function"]).to(self.device)
 
         self.actor = ActionDecoder(
@@ -106,9 +106,11 @@ class Dreamer:
                             activation = self.args["cnn_activation_function"]).to(self.device)
         
         # Proprio_encoder and decoder, decoder is not used currently, since reconstructing proprioception is not considered for now.
+        # self.proprio_encoder = ProprioEncoder(input_dim = self.proprio_size, 
+        #                                       hidden_dim = self.args["proprio_embed_size"]*2, 
+        #                                       output_dim = self.args["proprio_embed_size"]).to(self.device)
         self.proprio_encoder = ProprioEncoder(input_dim = self.proprio_size, 
-                                              hidden_dim = 64, 
-                                              output_dim = 32).to(self.device)
+                                              output_dim = self.args["proprio_embed_size"]).to(self.device)
 
         self.proprio_decoder = ProprioDecoder(input_dim = 32, 
                                               hidden_dim = 64, 
@@ -172,16 +174,19 @@ class Dreamer:
         init_state = self.rssm.init_state(self.args["batch_size"], self.device)
         
         # Features of concatenated images and proprioception
-        proprio_obs = preprocess_proprio(obs_proprio)
+        # proprio_obs = preprocess_proprio(obs_proprio)
+        proprio_obs = obs_proprio
+        
         proprio_embed = self.proprio_encoder(proprio_obs[1:])
         prior, self.posterior = self.rssm.observe_rollout(obs_embed, proprio_embed, acs[:-1], nonterms[:-1], init_state, self.args["train_seq_len"]-1)
         features = torch.cat([self.posterior['stoch'], self.posterior['deter']], dim=-1)
         rew_dist = self.reward_model(features)
         
-        # Get features of images only
-        prior_image, posterior_image = self.rssm.observe_image_rollout(obs_embed, acs[:-1], nonterms[:-1], init_state, self.args["train_seq_len"]-1)
-        features_image = torch.cat([posterior_image['stoch'], posterior_image['deter']], dim=-1)
-        obs_dist = self.obs_decoder(features_image)
+        # # Get features of images only
+        # prior_image, posterior_image = self.rssm.observe_image_rollout(obs_embed, acs[:-1], nonterms[:-1], init_state, self.args["train_seq_len"]-1)
+        # features_image = torch.cat([posterior_image['stoch'], posterior_image['deter']], dim=-1)
+        # obs_dist = self.obs_decoder(features_image)
+        obs_dist = self.obs_decoder(features)
 
         if self.args["use_disc_model"]:
             disc_dist = self.discount_model(features)

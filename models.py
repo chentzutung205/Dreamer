@@ -177,6 +177,21 @@ class RSSM(nn.Module):
             deter = torch.reshape(state['deter'], (state['deter'].shape[0]* state['deter'].shape[1], *state['deter'].shape[2:])))
 
 class ProprioEncoder(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super().__init__()
+        self.norm = nn.LayerNorm(input_dim)  # More stable than BatchNorm1d for small batches
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, 64),  # Hidden layer
+            nn.ReLU(),
+            nn.Linear(64, output_dim),  # Output layer
+            nn.ReLU()
+        )
+
+    def forward(self, x):
+        x = self.norm(x)
+        return self.mlp(x)
+    
+class ProprioEncoder0(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim):
         super().__init__()
         self.mlp = nn.Sequential(

@@ -9,6 +9,7 @@
   "cnn_activation_function": "relu",
   "dense_activation_function": "elu",
   "obs_embed_size": 1024,
+  "proprio_embed_size": 16,
   "num_units": 400,
   "deter_size": 200,
   "stoch_size": 30,
