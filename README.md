@@ -33,8 +33,11 @@ Run:
 
 #### For training
 You can select any block index from 1 to 6 with 'efficientnet' activated, and 'cnn' will use the original image encoder.
+
 The "freeze_encoder" flag activates gradient flow to the pretrained encoder or deactivates it.
+
 Finally, you can pick the embedding size, with 1024 being the original used on the CNN
+
 `python dreamer.py --config config.json --train --env walker-walk --encoder_type <'efficientnet' or 'cnn'> --obs_embed_size=1024 --block_index=<1-6> --seed=1 --freeze_encoder`
 #### For Evaluation
 `python dreamer.py --config config.json --evaluate --restore --checkpoint_path '<your_ckpt_path>'`
