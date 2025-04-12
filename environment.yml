@@ -24,6 +24,8 @@ dependencies:
   - pip
   - pip:
       - dm_control
+      - transformers
+      - timm
       - moviepy==1.0.3
       - tensorboardX
       - opencv-python
