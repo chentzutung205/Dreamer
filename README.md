@@ -10,6 +10,12 @@ This work is my attempt at reproducing Dreamerv1 & v2 papers in pytorch specific
  2. Although less flexible, Convolution models where layed out step by step for readibility
  3. This branch includes EfficientNetB0 as an image encoder to be chosen
 
+#### Implementation of the Dreamer agent with Pretrained Vision Embeddings (1M Steps)
+<img src="https://github.com/user-attachments/assets/a842f33f-9847-4323-9300-950630fce714" width="150">
+<img src="https://github.com/user-attachments/assets/619ce071-4dea-45a6-be0f-4ceaa7cb0e26" width="150">
+<img src="https://github.com/user-attachments/assets/a2bd3690-9e1c-4518-86b4-18b880f8523b" width="150">
+<img src="https://github.com/user-attachments/assets/736bb65d-62d2-45da-948c-e66ad21d1639" width="150">
+
 
 ## Code Structure
 Code structure is similar to original work by Danijar Hafner in Tensorflow
