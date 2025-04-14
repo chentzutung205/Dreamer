@@ -16,6 +16,12 @@ This work is my attempt at reproducing Dreamerv1 & v2 papers in pytorch specific
 <img src="https://github.com/user-attachments/assets/3e69087a-0e17-478f-b187-cf16dd227ad8" width="150">
 <img src="https://github.com/user-attachments/assets/0f440da0-066f-40f6-9787-c7b72988e379" width="150">
 
+#### Implementation of the Dreamer agent with Pretrained Vision Embeddings (1M Steps)
+<img src="https://github.com/user-attachments/assets/a842f33f-9847-4323-9300-950630fce714" width="150">
+<img src="https://github.com/user-attachments/assets/619ce071-4dea-45a6-be0f-4ceaa7cb0e26" width="150">
+<img src="https://github.com/user-attachments/assets/a2bd3690-9e1c-4518-86b4-18b880f8523b" width="150">
+<img src="https://github.com/user-attachments/assets/736bb65d-62d2-45da-948c-e66ad21d1639" width="150">
+
 ## Code Structure
 Code structure is similar to original work by Danijar Hafner in Tensorflow
 
