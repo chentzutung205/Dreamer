@@ -9,6 +9,10 @@ This work is my attempt at reproducing Dreamerv1 & v2 papers in pytorch specific
  1. Replay Buffer manages episodes instead of transitions, making sure that we don't mix episodes when sampling
  2. Although less flexible, Convolution models where layed out step by step for readibility
  3. This branch includes the integration of proprioception, allowing the agent to learn from internal state information in addition to visual input
+ 4. Proprioception support requires careful handling of shape inconsistencies across tasks. For example, some environments like `walker-walk` may report a proprio observation shape that is off by one. In such cases, you may need to manually adjust the shape in `dreamer.py` by modifying the line:
+```
+proprio_shape = train_env.observation_space['proprio'].shape[0] + 1
+```
 
 #### Simple implementation of the Dreamer agent
 
