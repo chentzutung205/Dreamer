@@ -8,6 +8,7 @@ This work is my attempt at reproducing Dreamerv1 & v2 papers in pytorch specific
 
  1. Replay Buffer manages episodes instead of transitions, making sure that we don't mix episodes when sampling
  2. Although less flexible, Convolution models where layed out step by step for readibility
+ 3. This branch includes the integration of proprioception, allowing the agent to learn from internal state information in addition to visual input
 
 #### Simple implementation of the Dreamer agent
 
